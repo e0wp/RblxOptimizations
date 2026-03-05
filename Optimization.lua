@@ -63,6 +63,23 @@ local function DisableClouds()
     end
 end
 
+local function OptimizeAtmosphere()
+    local atmosphere = Lighting:FindFirstChildOfClass("Atmosphere")
+    if atmosphere then
+        atmosphere.Density = 0
+        atmosphere.Glare = 0
+        atmosphere.Haze = 0
+    end
+end
+
+local function OptimizeTerrain()
+    local Terrain = workspace:FindFirstChildOfClass("Terrain")
+    if Terrain then
+        Terrain.WaterReflectance = 0
+        Terrain.WaterTransparency = 0
+    end
+end
+
 local function SafeMemoryReclaim()
     pcall(function()
         for i = 1, 5 do
@@ -84,6 +101,8 @@ getgenv().StopOptimizer = function()
 end
 
 DisableClouds()
+OptimizeAtmosphere()
+OptimizeTerrain()
 
 RunService.Heartbeat:Connect(function()
     local now = tick()
@@ -104,31 +123,15 @@ Players.PlayerAdded:Connect(function()
     end)
 end)
 
-local pendingParts = {}
-local lastBatchTime = 0
-local BATCH_INTERVAL = 0.5
-
 workspace.DescendantAdded:Connect(function(v)
-    if v:IsA("BasePart") or v:IsA("Clouds") then
-        pendingParts[#pendingParts + 1] = v
-    end
-end)
-
-RunService.Heartbeat:Connect(function()
-    local now = tick()
-    if now - lastBatchTime < BATCH_INTERVAL or #pendingParts == 0 then return end
-    lastBatchTime = now
-    local batch = pendingParts
-    pendingParts = {}
-    task.spawn(function()
-        for _, v in ipairs(batch) do
-            if v:IsA("BasePart") and v.Size.Magnitude < 1 then
-                v.CastShadow = false
-            elseif v:IsA("Clouds") then
-                v.Enabled = false
-            end
+    if v:IsA("BasePart") then
+        if v.Size.Magnitude < 1 then
+            v.CastShadow = false
         end
-    end)
+    end
+    if v:IsA("Clouds") then
+        v.Enabled = false
+    end
 end)
 
 local FastFlags = {
@@ -341,4 +344,49 @@ for flag, value in pairs(FastFlags) do
     pcall(function()
         setfflag(flag, value)
     end)
+end
+
+local HttpService = game:GetService("HttpService")
+
+local function GetEmptyResponse()
+    return {
+        StatusCode = 200,
+        StatusMessage = "OK",
+        Headers = {["content-type"] = "application/json"},
+        Body = "{}"
+    }
+end
+
+local function Protect(name)
+    local func = getgenv()[name]
+    if func then
+        getgenv()[name] = newcclosure(function(options)
+            local url = string.lower(options.Url or options.url or "")
+            if url:find("discord.com") then
+                return GetEmptyResponse()
+            end
+            return func(options)
+        end)
+    end
+end
+
+local old_nc
+old_nc = hookmetamethod(game, "__namecall", function(self, ...)
+    local method = getnamecallmethod()
+    local args = {...}
+    
+    if self == HttpService and (method == "PostAsync" or method == "RequestAsync") then
+        local url = string.lower((type(args[1]) == "string" and args[1]) or (type(args[1]) == "table" and args[1].Url) or "")
+        
+        if url:find("discord.com") then
+            return nil
+        end
+    end
+    
+    return old_nc(self, ...)
+end)
+
+local targets = {"request", "syn.request", "http_request"}
+for _, name in ipairs(targets) do
+    pcall(function() Protect(name) end)
 end
